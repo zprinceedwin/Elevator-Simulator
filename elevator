@@ -33,6 +33,20 @@ int getValidPeopleInput();
 string getValidContinueInput();
 void processRequest(const Request &request);
 void processRequests();
+void displayElevator();
+
+
+void displayElevator(int currentFloor) {
+    cout << "\nElevator Movement:\n";
+    for (int floor = 9; floor >= 1; --floor) {
+        if (floor == currentFloor) {
+            cout << "[" << floor << "] <-- Elevator\n";
+        } else {
+            cout << "[" << floor << "]\n";
+        }
+    }
+    cout << "\n";
+}
 
 // Input validation functions
 int getValidFloorInput(const string& prompt, bool isFromFloor) {
@@ -45,29 +59,29 @@ int getValidFloorInput(const string& prompt, bool isFromFloor) {
         int floor;
         try {
             if (input == "GF") {
-                floor = 0;
+                floor = 1;
             } else {
                 floor = stoi(input);
             }
         } catch (...) {
-            cout << "The floors are numbers, not letters don't be a dumbass. Enter a valid floor (GF to 9)!\n";
+            cout << "The floors are numbers, not letters! Enter a valid floor (GF to 9)!\n";
             cin.clear();
             cin.ignore(numeric_limits<streamsize>::max(), '\n');
             continue;
         }
 
         // Validate floor range
-        if (floor < 0 || floor > 9) {
-            cout << "Read the instructions, this elevator only stops at floors GF to 9. It doesn't go to heaven nor hell!\n";
+        if (floor < 1 || floor > 9) {
+            cout << "Read the instructions, this elevator only stops at floors GF to 9.\n";
             continue;
         }
 
         // Additional check for to-floor logic
         if (!isFromFloor) {
             int currentDir = upRequests.empty() && downRequests.empty() ? 1 : currentDirection;
-            if ((currentDir == 1 && floor <= currentFloor) || 
-                (currentDir == -1 && floor >= currentFloor)) {
-                cout << "Seriously? That's not a valid destination floor for your current direction!\n";
+            if ((currentDir == 1 && floor < currentFloor) || 
+                (currentDir == -1 && floor > currentFloor)) {
+                cout << "That's not a valid destination floor for your current direction!\n";
                 continue;
             }
         }
@@ -80,10 +94,10 @@ int getValidPeopleInput() {
     while (true) {
         cout << "How many people (1-10): ";
         int people;
-        
+
         // Check for valid integer input
         if (!(cin >> people)) {
-            cout << "Numbers, please! Not alphabets, not interpretive dance!\n";
+            cout << "Numbers, please! Try again.\n";
             cin.clear();
             cin.ignore(numeric_limits<streamsize>::max(), '\n');
             continue;
@@ -91,14 +105,13 @@ int getValidPeopleInput() {
 
         // Check for negative or zero people
         if (people <= 0) {
-            cout << "Negative people? Quantum physics hasn't invented those yet! Try again.\n";
+            cout << "Invalid input! Try again.\n";
             continue;
         }
 
         // Check for overcapacity
         if (people > maxCapacity) {
-            cout << "Don't force it. Max capacity is 10 people. " 
-                 << "Current remaining capacity: " << maxCapacity - currentPeople << "\n";
+            cout << "Don't force it. Max capacity is 10 people.\n";
             continue;
         }
 
@@ -121,18 +134,26 @@ string getValidContinueInput() {
             return input;
         }
 
-        cout << "It's not rocket science! Just type 'yes' or 'no'. Don't be stupid!\n";
+        cout << "Just type 'yes' or 'no'. Try again!\n";
     }
 }
 
 void processRequest(const Request &request) {
     lock_guard<mutex> lock(elevatorMutex);
 
+    // Validate request direction
+    if ((currentDirection == 1 && request.toFloor < request.fromFloor) || 
+        (currentDirection == -1 && request.toFloor > request.fromFloor)) {
+        cout << "Invalid request: Destination floor does not match the direction of travel!\n";
+        return;
+    }
+
     // Move to the pickup floor
     if (currentFloor != request.fromFloor) {
         currentFloor = request.fromFloor;
+        displayElevator(currentFloor);
         cout << "Elevator moving to floor " << (currentFloor == 0 ? "GF" : to_string(currentFloor)) << ".\n";
-        this_thread::sleep_for(chrono::seconds(abs(request.fromFloor - currentFloor)));
+        this_thread::sleep_for(chrono::seconds(1));
     }
 
     // Pick up people
@@ -165,51 +186,38 @@ void processRequests() {
             cout << "Dropped off " << dropoffCount << " people at floor " << (currentFloor == 0 ? "GF" : to_string(currentFloor)) << ". Elevator now has " << currentPeople << " people.\n";
         }
 
-        // Process all requests in the current direction
+        // Process requests in the current direction
         if (currentDirection == 1) {
-            // Sort up requests in ascending order
             sort(upRequests.begin(), upRequests.end(), [](const Request &a, const Request &b) {
                 return a.fromFloor < b.fromFloor;
             });
 
             while (!upRequests.empty() && currentPeople < maxCapacity) {
                 Request req = upRequests.front();
-                if (req.fromFloor < currentFloor) {
-                    break;
-                }
+                if (req.fromFloor < currentFloor) break;
                 upRequests.erase(upRequests.begin());
                 processRequest(req);
             }
 
-            // Switch direction if no more requests
-            if (upRequests.empty() && passengers.empty()) {
-                currentDirection = -1;
-            }
+            if (upRequests.empty() && passengers.empty()) currentDirection = -1;
         } else {
-            // Sort down requests in descending order
             sort(downRequests.begin(), downRequests.end(), [](const Request &a, const Request &b) {
                 return a.fromFloor > b.fromFloor;
             });
 
             while (!downRequests.empty() && currentPeople < maxCapacity) {
                 Request req = downRequests.front();
-                if (req.fromFloor > currentFloor) {
-                    break;
-                }
+                if (req.fromFloor > currentFloor) break;
                 downRequests.erase(downRequests.begin());
                 processRequest(req);
             }
 
-            // Switch direction if no more requests
-            if (downRequests.empty() && passengers.empty()) {
-                currentDirection = 1;
-            }
+            if (downRequests.empty() && passengers.empty()) currentDirection = 1;
         }
 
-        // Move to the next floor in the current direction
-        if (!passengers.empty() || (!upRequests.empty() && currentDirection == 1) || (!downRequests.empty() && currentDirection == -1)) {
-            int nextFloor = currentDirection == 1 ? currentFloor + 1 : currentFloor - 1;
-            currentFloor = nextFloor;
+        if (!passengers.empty()) {
+            currentFloor = passengers.front();
+            displayElevator(currentFloor);
             cout << "Elevator moving to floor " << (currentFloor == 0 ? "GF" : to_string(currentFloor)) << ".\n";
             this_thread::sleep_for(chrono::seconds(1));
         }
@@ -221,34 +229,24 @@ int main() {
 
     do {
         cout << "Elevator currently at floor " << (currentFloor == 0 ? "GF" : to_string(currentFloor)) << ".\n";
-        
-        // Get from floor with validation
+
         int fromFloor = getValidFloorInput("From floor number (GF to 9): ", true);
 
-        // Get direction
         int direction;
         while (true) {
             cout << "Direction (1 = up, -1 = down): ";
-            if (cin >> direction && (direction == 1 || direction == -1)) {
-                break;
-            }
+            if (cin >> direction && (direction == 1 || direction == -1)) break;
             cout << "Invalid direction! Choose 1 for up or -1 for down.\n";
-            cin.clear();
-            cin.ignore(numeric_limits<streamsize>::max(), '\n');
         }
 
-        // Prepare to floor prompt based on direction
         string toFloorPrompt = (direction == 1) 
             ? "To floor number (" + (fromFloor == 0 ? "1" : to_string(fromFloor + 1)) + " to 9): "
             : "To floor number (GF to " + to_string(fromFloor - 1) + "): ";
 
-        // Get to floor with validation
         int toFloor = getValidFloorInput(toFloorPrompt, false);
 
-        // Get number of people
         int people = getValidPeopleInput();
 
-        // Create and store request
         Request newRequest = {fromFloor, toFloor, people, direction};
         if (direction == 1) {
             upRequests.push_back(newRequest);
@@ -256,12 +254,10 @@ int main() {
             downRequests.push_back(newRequest);
         }
 
-        // Continue or exit
         continueRequest = getValidContinueInput();
 
     } while (continueRequest == "yes");
 
-    // Process requests
     processRequests();
 
     cout << "All requests processed.\n";
