@@ -1,0 +1,269 @@
+#include <iostream>
+#include <vector>
+#include <algorithm>
+#include <thread>
+#include <mutex>
+#include <chrono>
+#include <limits>
+using namespace std;
+
+// Global variables
+int currentFloor = 0; // Ground floor
+int currentPeople = 0;
+int currentDirection = 1; // 1 for up, -1 for down
+const int maxCapacity = 10;
+mutex elevatorMutex;
+
+// Request structure
+struct Request {
+    int fromFloor;
+    int toFloor;
+    int people;
+    int direction;
+};
+
+// Queues for requests
+vector<Request> upRequests;
+vector<Request> downRequests;
+vector<int> passengers; // Tracks drop-off floors
+
+// Function declarations
+int getValidFloorInput(const string& prompt, bool isFromFloor);
+int getValidPeopleInput();
+string getValidContinueInput();
+void processRequest(const Request &request);
+void processRequests();
+
+// Input validation functions
+int getValidFloorInput(const string& prompt, bool isFromFloor) {
+    while (true) {
+        cout << prompt;
+        string input;
+        cin >> input;
+
+        // Convert input to floor number
+        int floor;
+        try {
+            if (input == "GF") {
+                floor = 0;
+            } else {
+                floor = stoi(input);
+            }
+        } catch (...) {
+            cout << "The floors are numbers, not letters don't be a dumbass. Enter a valid floor (GF to 9)!\n";
+            cin.clear();
+            cin.ignore(numeric_limits<streamsize>::max(), '\n');
+            continue;
+        }
+
+        // Validate floor range
+        if (floor < 0 || floor > 9) {
+            cout << "Read the instructions, this elevator only stops at floors GF to 9. It doesn't go to heaven nor hell!\n";
+            continue;
+        }
+
+        // Additional check for to-floor logic
+        if (!isFromFloor) {
+            int currentDir = upRequests.empty() && downRequests.empty() ? 1 : currentDirection;
+            if ((currentDir == 1 && floor <= currentFloor) || 
+                (currentDir == -1 && floor >= currentFloor)) {
+                cout << "Seriously? That's not a valid destination floor for your current direction!\n";
+                continue;
+            }
+        }
+
+        return floor;
+    }
+}
+
+int getValidPeopleInput() {
+    while (true) {
+        cout << "How many people (1-10): ";
+        int people;
+        
+        // Check for valid integer input
+        if (!(cin >> people)) {
+            cout << "Numbers, please! Not alphabets, not interpretive dance!\n";
+            cin.clear();
+            cin.ignore(numeric_limits<streamsize>::max(), '\n');
+            continue;
+        }
+
+        // Check for negative or zero people
+        if (people <= 0) {
+            cout << "Negative people? Quantum physics hasn't invented those yet! Try again.\n";
+            continue;
+        }
+
+        // Check for overcapacity
+        if (people > maxCapacity) {
+            cout << "Don't force it. Max capacity is 10 people. " 
+                 << "Current remaining capacity: " << maxCapacity - currentPeople << "\n";
+            continue;
+        }
+
+        return people;
+    }
+}
+
+string getValidContinueInput() {
+    while (true) {
+        cout << "Do you want to add another request? (yes/no): ";
+        string input;
+        cin >> input;
+
+        // Convert to lowercase for case-insensitive comparison
+        for (char& c : input) {
+            c = tolower(c);
+        }
+
+        if (input == "yes" || input == "no") {
+            return input;
+        }
+
+        cout << "It's not rocket science! Just type 'yes' or 'no'. Don't be stupid!\n";
+    }
+}
+
+void processRequest(const Request &request) {
+    lock_guard<mutex> lock(elevatorMutex);
+
+    // Move to the pickup floor
+    if (currentFloor != request.fromFloor) {
+        currentFloor = request.fromFloor;
+        cout << "Elevator moving to floor " << (currentFloor == 0 ? "GF" : to_string(currentFloor)) << ".\n";
+        this_thread::sleep_for(chrono::seconds(abs(request.fromFloor - currentFloor)));
+    }
+
+    // Pick up people
+    currentPeople += request.people;
+    cout << "Picked up " << request.people << " people at floor " << (request.fromFloor == 0 ? "GF" : to_string(request.fromFloor)) << ". Elevator now has " << currentPeople << " people.\n";
+
+    // Add drop-off floors to the passenger list
+    for (int i = 0; i < request.people; i++) {
+        passengers.push_back(request.toFloor);
+    }
+
+    // Sort passengers based on direction
+    if (currentDirection == 1) {
+        sort(passengers.begin(), passengers.end());
+    } else {
+        sort(passengers.rbegin(), passengers.rend());
+    }
+}
+
+void processRequests() {
+    while (!upRequests.empty() || !downRequests.empty() || !passengers.empty()) {
+        // Handle drop-offs
+        int dropoffCount = 0;
+        while (!passengers.empty() && passengers.front() == currentFloor) {
+            passengers.erase(passengers.begin());
+            currentPeople--;
+            dropoffCount++;
+        }
+        if (dropoffCount > 0) {
+            cout << "Dropped off " << dropoffCount << " people at floor " << (currentFloor == 0 ? "GF" : to_string(currentFloor)) << ". Elevator now has " << currentPeople << " people.\n";
+        }
+
+        // Process all requests in the current direction
+        if (currentDirection == 1) {
+            // Sort up requests in ascending order
+            sort(upRequests.begin(), upRequests.end(), [](const Request &a, const Request &b) {
+                return a.fromFloor < b.fromFloor;
+            });
+
+            while (!upRequests.empty() && currentPeople < maxCapacity) {
+                Request req = upRequests.front();
+                if (req.fromFloor < currentFloor) {
+                    break;
+                }
+                upRequests.erase(upRequests.begin());
+                processRequest(req);
+            }
+
+            // Switch direction if no more requests
+            if (upRequests.empty() && passengers.empty()) {
+                currentDirection = -1;
+            }
+        } else {
+            // Sort down requests in descending order
+            sort(downRequests.begin(), downRequests.end(), [](const Request &a, const Request &b) {
+                return a.fromFloor > b.fromFloor;
+            });
+
+            while (!downRequests.empty() && currentPeople < maxCapacity) {
+                Request req = downRequests.front();
+                if (req.fromFloor > currentFloor) {
+                    break;
+                }
+                downRequests.erase(downRequests.begin());
+                processRequest(req);
+            }
+
+            // Switch direction if no more requests
+            if (downRequests.empty() && passengers.empty()) {
+                currentDirection = 1;
+            }
+        }
+
+        // Move to the next floor in the current direction
+        if (!passengers.empty() || (!upRequests.empty() && currentDirection == 1) || (!downRequests.empty() && currentDirection == -1)) {
+            int nextFloor = currentDirection == 1 ? currentFloor + 1 : currentFloor - 1;
+            currentFloor = nextFloor;
+            cout << "Elevator moving to floor " << (currentFloor == 0 ? "GF" : to_string(currentFloor)) << ".\n";
+            this_thread::sleep_for(chrono::seconds(1));
+        }
+    }
+}
+
+int main() {
+    string continueRequest;
+
+    do {
+        cout << "Elevator currently at floor " << (currentFloor == 0 ? "GF" : to_string(currentFloor)) << ".\n";
+        
+        // Get from floor with validation
+        int fromFloor = getValidFloorInput("From floor number (GF to 9): ", true);
+
+        // Get direction
+        int direction;
+        while (true) {
+            cout << "Direction (1 = up, -1 = down): ";
+            if (cin >> direction && (direction == 1 || direction == -1)) {
+                break;
+            }
+            cout << "Invalid direction! Choose 1 for up or -1 for down.\n";
+            cin.clear();
+            cin.ignore(numeric_limits<streamsize>::max(), '\n');
+        }
+
+        // Prepare to floor prompt based on direction
+        string toFloorPrompt = (direction == 1) 
+            ? "To floor number (" + (fromFloor == 0 ? "1" : to_string(fromFloor + 1)) + " to 9): "
+            : "To floor number (GF to " + to_string(fromFloor - 1) + "): ";
+
+        // Get to floor with validation
+        int toFloor = getValidFloorInput(toFloorPrompt, false);
+
+        // Get number of people
+        int people = getValidPeopleInput();
+
+        // Create and store request
+        Request newRequest = {fromFloor, toFloor, people, direction};
+        if (direction == 1) {
+            upRequests.push_back(newRequest);
+        } else {
+            downRequests.push_back(newRequest);
+        }
+
+        // Continue or exit
+        continueRequest = getValidContinueInput();
+
+    } while (continueRequest == "yes");
+
+    // Process requests
+    processRequests();
+
+    cout << "All requests processed.\n";
+    return 0;
+}
